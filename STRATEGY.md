@@ -16,14 +16,32 @@ puts. No spreads, no naked options — never propose them.
 
 ## Phases (by account value)
 
-- **Under $500 — bootstrap.** Options are not viable at this size. Deploy the
-  full available cash into a broad-market ETF (prefer VOO, else VTI) via a
-  dollar-based market order, and note in every report how far the account is
-  from the $500 options threshold.
-- **$500 to $3,000 — directional only.** Long calls/puts within the rules
-  below. Income trades are not yet possible (collateral for 100 shares is out
-  of reach). The ETF core from bootstrap may be held or sold to free premium
-  budget as opportunities warrant.
+- **Under $500 — moonshot experiment.** A deliberate, user-chosen experiment:
+  attempt to ladder the starting ~$11 to $500 through sequential cheap long
+  option trades. **The expected outcome is losing the entire stake; the user
+  has accepted this explicitly.** Rules for this phase only:
+  - One position at a time, funded with the full available cash (diversification
+    is impossible at this size). Do not deploy cash into equities.
+  - Candidate contracts: long calls or puts priced within available cash on
+    liquid low-priced underlyings (e.g. F, SOFI, PLTR, AAL, NIO, LCID, and
+    similar), 7–30 days to expiration, strike as close to the money as the
+    budget allows — prefer a nearer strike over a longer date. The standard
+    liquidity gate is relaxed to: spread ≤ 25% of mid, open interest ≥ 100.
+  - Every proposal states the thesis (momentum, catalyst, or setup — not a
+    random pick), the contract's full parameters, and a limit price at the mid.
+  - Exit ladder: take profit at +100% to +200% and roll the full proceeds into
+    the next trade; cut at −50% only if the remainder can still buy another
+    contract, otherwise ride it to resolution. Never hold into the final
+    2 days before expiration.
+  - Progress math in every report: account value, number of consecutive
+    doubles still needed to reach $500 (~$11 needs about six), and the
+    running win/loss ledger of the experiment.
+  - **Experiment ends** when the account cannot afford any qualifying contract
+    (report it as concluded, hold cash) or when value crosses $500 (graduate
+    to the next phase). Fresh deposits restart or accelerate the ladder.
+- **$500 to $3,000 — directional only.** Long calls/puts within the standard
+  rules below (the moonshot relaxations no longer apply). Income trades are
+  not yet possible (collateral for 100 shares is out of reach).
 - **$3,000+ — full strategy.** Income base plus directional bets.
 
 ## Universe
@@ -32,6 +50,8 @@ puts. No spreads, no naked options — never propose them.
   single names with tight chains (e.g. AAPL, MSFT, NVDA, AMD, F, SOFI).
 - Liquidity gate for every contract: bid-ask spread under 10% of the mid,
   open interest over 500. If a chain fails the gate, skip the trade.
+- During the moonshot phase, that phase's own universe and relaxed liquidity
+  gate replace the two rules above.
 
 ## Directional rules (long calls / long puts)
 
