@@ -458,9 +458,16 @@ def build() -> str:
         "</section>",
     ]
 
-    # Actionable proposals from the latest report
-    for i, p in enumerate(proposals):
-        parts.append(f'<div class="proposal-card" id="prop-{i}">')
+    # Actionable proposals from the latest report. Only plain equity orders get
+    # an Accept button — the on-page flow speaks review/place_equity_order.
+    # Option proposals (legs/strike/expiration/option_id) render info-only.
+    OPTION_KEYS = ("legs", "option_id", "strike", "expiration", "price")
+    equity_proposals: list[dict] = []
+    for p in proposals:
+        parts_idx = len(equity_proposals)
+        is_option = any(k in p for k in OPTION_KEYS) or p.get("instrument") == "option"
+        card_id = f'id="prop-{parts_idx}"' if not is_option else ""
+        parts.append(f'<div class="proposal-card" {card_id}>')
         parts.append(f'<p class="p-title">Proposed: {html.escape(describe_proposal(p))}</p>')
         if p.get("note"):
             parts.append(f'<p class="p-note">{html.escape(str(p["note"]))}</p>')
@@ -468,8 +475,13 @@ def build() -> str:
         if "account_number" in shown:
             shown["account_number"] = "••••" + str(shown["account_number"])[-4:]
         parts.append(f'<p class="p-params">{html.escape(json.dumps(shown))}</p>')
-        parts.append('<button class="accept-btn" type="button">Accept — review with broker</button>')
-        parts.append('<div class="review-box" hidden></div>')
+        if is_option:
+            parts.append('<p class="p-note">Option order — execute manually in the '
+                         "Robinhood app for now.</p>")
+        else:
+            parts.append('<button class="accept-btn" type="button">Accept — review with broker</button>')
+            parts.append('<div class="review-box" hidden></div>')
+            equity_proposals.append(p)
         parts.append("</div>")
 
     if not parsed:
@@ -504,7 +516,7 @@ def build() -> str:
 
     js = (JS.replace("__SERVER__", MCP_SERVER)
             .replace("__ACCOUNT__", AGENTIC_ACCOUNT)
-            .replace("__PROPOSALS__", json.dumps(proposals)))
+            .replace("__PROPOSALS__", json.dumps(equity_proposals)))
     parts.append(f"<script>{js}</script>")
     return "\n".join(parts)
 
