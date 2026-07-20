@@ -23,8 +23,8 @@ puts. No spreads, no naked options — never propose them.
   - One position at a time, funded with the full available cash (diversification
     is impossible at this size). Do not deploy cash into equities.
   - Candidate contracts: long calls or puts priced within available cash on
-    liquid low-priced underlyings (e.g. F, SOFI, PLTR, AAL, NIO, LCID, and
-    similar), 7–30 days to expiration, strike as close to the money as the
+    liquid low-priced underlyings (e.g. F, SOFI, PLTR, AAL, NIO, LCID, INTC,
+    and similar), 7–30 days to expiration, strike as close to the money as the
     budget allows — prefer a nearer strike over a longer date. The standard
     liquidity gate is relaxed to: spread ≤ 25% of mid, open interest ≥ 100.
   - Every proposal states the thesis (momentum, catalyst, or setup — not a
@@ -52,6 +52,24 @@ puts. No spreads, no naked options — never propose them.
   open interest over 500. If a chain fails the gate, skip the trade.
 - During the moonshot phase, that phase's own universe and relaxed liquidity
   gate replace the two rules above.
+
+## Thesis lenses
+
+Proposals should name the lens behind the thesis. Alongside generic momentum
+and catalyst setups, apply:
+
+- **Jevons paradox lens.** When news of an efficiency breakthrough (cheaper AI
+  inference, better chips, lower energy cost per unit of work) triggers a
+  selloff in suppliers of the underlying resource (compute, chips, power,
+  datacenter infrastructure), treat the dip as a contrarian long candidate:
+  falling cost per use tends to expand total consumption of the resource, so
+  the panic often reverses. Trade it with calls on the sold-off supplier after
+  the initial flush stabilizes (not into the falling knife), sized and timed
+  by the phase rules. The mirror also holds: be skeptical of puts on resource
+  suppliers whose only bear case is "usage got more efficient."
+  Moonshot-affordable expressions of this lens include INTC and other
+  low-priced chip/energy/infrastructure names that pass the liquidity gate;
+  larger-account expressions include NVDA, AMD, and power/datacenter names.
 
 ## Directional rules (long calls / long puts)
 
