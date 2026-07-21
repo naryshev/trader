@@ -15,3 +15,8 @@ verbatim, and places the order (place_equity_order) only after the user
 presses Confirm. Supported keys mirror the equity order tools: symbol, side,
 type, quantity or dollar_amount, limit_price, stop_price, time_in_force,
 market_hours, plus a free-text note.
+
+Option proposals additionally carry `option_id` (the contract instrument id
+from get_option_instruments — required for the dashboard's checkbox build
+flow) and `eli5` (a plain-language explanation of the pick, shown on the
+card). Option proposals without option_id render as manual-execution cards.
