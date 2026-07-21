@@ -104,7 +104,13 @@ and catalyst setups, apply:
 
 ## Reporting
 
-Every run ends with the standard report. Proposals include exact contract
-parameters (underlying, strike, expiration, side, quantity, limit price) and
-the thesis. Option proposals are executed manually in the Robinhood app for
-now; equity proposals can be accepted from the dashboard.
+Runs happen twice per trading day: shortly after the opening bell and shortly
+after the close. Every run ends with the standard report and presents
+**1–5 candidate option plays** for the user to choose from — ranked, each
+with: the thesis lens (momentum / catalyst / Jevons / other), exact contract
+parameters (underlying, strike, expiration, side, quantity, limit price at
+the mid), the liquidity numbers (spread, open interest), and what would make
+the play wrong. If fewer than the desired number of candidates pass the
+gates, present fewer and say why — never pad with junk. Option proposals are
+executed manually in the Robinhood app for now; equity proposals can be
+accepted from the dashboard.

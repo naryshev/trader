@@ -49,11 +49,13 @@ def parse_report(path: Path) -> dict:
                     pass
         text = text[m.end():].strip()
     date_str = path.stem[:10]
+    session = " · closing bell" if "close" in path.stem else (" · opening bell" if "open" in path.stem else "")
     try:
-        date_label = datetime.strptime(date_str, "%Y-%m-%d").strftime("%A, %B %-d, %Y")
+        date_label = datetime.strptime(date_str, "%Y-%m-%d").strftime("%A, %B %-d, %Y") + session
     except ValueError:
         date_label = path.stem
-    return {"date": date_str, "label": date_label, "headline": headline,
+    short = date_str + (" close" if "close" in path.stem else (" open" if "open" in path.stem else ""))
+    return {"date": short, "label": date_label, "headline": headline,
             "proposals": proposals, "body": text}
 
 
@@ -425,8 +427,11 @@ def describe_proposal(p: dict) -> str:
 
 
 def build() -> str:
+    # Two reports per trading day: -open and -close. For a given date the
+    # close run outranks the open run.
     reports = sorted(
         (p for p in REPORTS_DIR.glob("*.md") if re.match(r"\d{4}-\d{2}-\d{2}", p.stem)),
+        key=lambda p: (p.stem[:10], "close" in p.stem, p.stem),
         reverse=True,
     ) if REPORTS_DIR.exists() else []
     parsed = [parse_report(p) for p in reports[:MAX_HISTORY]]
