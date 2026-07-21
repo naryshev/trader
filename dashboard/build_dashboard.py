@@ -162,6 +162,15 @@ button:disabled { opacity: .55; cursor: default; }
 .proposal-card .p-params { font-family: var(--mono); font-size: .8rem;
   color: var(--ink-soft); margin: 0 0 .6rem; overflow-x: auto; }
 .proposal-card .p-note { font-size: .85rem; margin: 0 0 .6rem; }
+.proposal-card .eli5 { font-size: .85rem; margin: 0 0 .6rem; padding: .5rem .7rem;
+  background: var(--chip-bg); border-radius: 5px; }
+.proposal-card .eli5 b { font-family: var(--mono); font-size: .72rem;
+  text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
+label.opt-row { display: flex; gap: .55rem; align-items: baseline; cursor: pointer; }
+label.opt-row input { width: 1.05rem; height: 1.05rem; flex: none;
+  accent-color: var(--accent); }
+.build-bar { margin: .4rem 0 1.2rem; }
+#build-out { margin-top: .6rem; font-size: .85rem; }
 .review-box { border-top: 1px solid var(--rule); margin-top: .7rem; padding-top: .7rem;
   font-size: .85rem; }
 .review-box .disclosure { font-family: var(--mono); font-size: .75rem;
@@ -422,6 +431,120 @@ JS = r"""
     else scanBtn.addEventListener("click", function () { runScan(); });
   }
 
+  // ---------- Option build flow: checkbox -> review -> explicit confirm -> place ----------
+  var OPTION_PROPOSALS = __OPTION_PROPOSALS__;
+  var buildBtn = document.getElementById("build-btn");
+  var buildOut = document.getElementById("build-out");
+
+  function optionOrderParams(p) {
+    return {
+      account_number: p.account_number || ACCOUNT,
+      type: "limit",
+      price: String(p.price),
+      quantity: String(p.quantity || "1"),
+      time_in_force: p.time_in_force || "gfd",
+      legs: [{option_id: p.option_id, side: p.side || "buy",
+              position_effect: "open", ratio_quantity: 1}],
+    };
+  }
+
+  function esc(s) { return String(s).replace(/[<>&]/g, ""); }
+
+  if (buildBtn) {
+    if (!mcpOk) { buildBtn.disabled = true; buildBtn.textContent = "Unavailable in this view"; }
+    else buildBtn.addEventListener("click", function () {
+      var checked = Array.prototype.slice.call(document.querySelectorAll(".opt-select:checked"));
+      if (checked.length === 0) {
+        buildOut.innerHTML = '<p class="msg warn">Tick the checkbox on one pick first.</p>'; return;
+      }
+      if (checked.length > 1) {
+        buildOut.innerHTML = '<p class="msg warn">One position at a time (strategy rule) — untick down to a single pick.</p>'; return;
+      }
+      var p = OPTION_PROPOSALS[Number(checked[0].getAttribute("data-opt"))];
+      if (!p) { buildOut.innerHTML = '<p class="msg warn">Could not match the selection.</p>'; return; }
+
+      buildBtn.disabled = true;
+      buildOut.innerHTML = "<p>Requesting broker review of " + esc(p.symbol) + " $" + esc(p.strike) +
+        " " + esc(p.option_type) + "…</p>";
+      window.claude.mcp.callTool(SERVER, "review_option_order", optionOrderParams(p), {cache: false})
+        .then(function (res) {
+          var d = (res.payload && res.payload.data) || res.payload || {};
+          var checks = d.order_checks || {};
+          var checkKeys = Object.keys(checks);
+          var el = document.createElement("div");
+          var cost = Number(p.price) * 100 * Number(p.quantity || 1);
+          var head = document.createElement("p");
+          head.innerHTML = "<strong>Broker review</strong> — buy " + esc(p.quantity || 1) +
+            " contract(s), limit $" + esc(p.price) + "/share, max cost $" + cost.toFixed(2) +
+            " + fees. Expires worthless if the bet misses.";
+          el.appendChild(head);
+          if (checkKeys.length) {
+            checkKeys.forEach(function (k) {
+              var a = document.createElement("p");
+              a.className = "alert";
+              a.textContent = "Alert (" + k + "): " + JSON.stringify(checks[k]);
+              el.appendChild(a);
+            });
+          } else {
+            var ok = document.createElement("p");
+            ok.textContent = "No broker alerts.";
+            el.appendChild(ok);
+          }
+          if (d.market_data_disclosure) {
+            // Compliance: shown verbatim, unmodified.
+            var disc = document.createElement("p");
+            disc.className = "disclosure";
+            disc.textContent = d.market_data_disclosure;
+            el.appendChild(disc);
+          }
+          var actions = document.createElement("div");
+          actions.className = "actions";
+          var confirmBtn = document.createElement("button");
+          confirmBtn.className = "primary";
+          confirmBtn.textContent = "Confirm — place real option order";
+          var cancelBtn = document.createElement("button");
+          cancelBtn.textContent = "Cancel";
+          actions.appendChild(confirmBtn); actions.appendChild(cancelBtn);
+          el.appendChild(actions);
+          buildOut.innerHTML = ""; buildOut.appendChild(el);
+
+          cancelBtn.addEventListener("click", function () {
+            buildOut.innerHTML = ""; buildBtn.disabled = false;
+          });
+          confirmBtn.addEventListener("click", function () {
+            confirmBtn.disabled = true; cancelBtn.disabled = true;
+            var params = optionOrderParams(p);
+            params.ref_id = uuid();
+            buildOut.insertAdjacentHTML("beforeend", "<p>Placing order…</p>");
+            window.claude.mcp.callTool(SERVER, "place_option_order", params, {cache: false})
+              .then(function (res2) {
+                var d2 = (res2.payload && res2.payload.data) || res2.payload || {};
+                var state = d2.state || (d2.order && d2.order.state) || "submitted";
+                buildOut.insertAdjacentHTML("beforeend",
+                  '<p class="result-ok">Order submitted (state: ' + esc(state) +
+                  "). Verify the fill in the Robinhood app; the exit ladder applies from entry.</p>");
+              })
+              .catch(function (err) {
+                var code = err && err.code;
+                if (code === "server_unavailable" || code === "upstream_error" || code === "cancelled") {
+                  buildOut.insertAdjacentHTML("beforeend",
+                    '<p class="result-err">The order attempt did not confirm — but it MAY still have gone through. ' +
+                    "Check the Robinhood app before trying again.</p>");
+                } else {
+                  buildOut.insertAdjacentHTML("beforeend",
+                    '<p class="result-err">Order not placed. ' + esc(errorCopy(err)) + "</p>");
+                }
+              });
+          });
+        })
+        .catch(function (err) {
+          buildOut.innerHTML = '<p class="result-err">Review failed — no order was placed. ' +
+            esc(errorCopy(err)) + "</p>";
+          buildBtn.disabled = false;
+        });
+    });
+  }
+
   // ---------- Proposal accept flow: review -> explicit confirm -> place ----------
   function uuid() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -542,6 +665,16 @@ def colorize(fragment: str) -> str:
 
 
 def describe_proposal(p: dict) -> str:
+    if p.get("option_type") or p.get("strike"):
+        return " · ".join(b for b in [
+            str(p.get("side", "buy")).upper(),
+            str(p.get("symbol", "")),
+            f"${p['strike']}" if p.get("strike") else "",
+            str(p.get("option_type", "")).upper(),
+            f"exp {p['expiration']}" if p.get("expiration") else "",
+            f"limit ${p['price']}" if p.get("price") else "",
+            f"cost ≈ ${float(p['price']) * 100 * float(p.get('quantity', 1)):.0f}" if p.get("price") else "",
+        ] if b)
     bits = [str(p.get("side", "")).upper(), str(p.get("symbol", ""))]
     if p.get("dollar_amount"):
         bits.append(f"${p['dollar_amount']}")
@@ -597,26 +730,41 @@ def build() -> str:
     # Option proposals (legs/strike/expiration/option_id) render info-only.
     OPTION_KEYS = ("legs", "option_id", "strike", "expiration", "price")
     equity_proposals: list[dict] = []
+    option_proposals: list[dict] = []
     for p in proposals:
-        parts_idx = len(equity_proposals)
         is_option = any(k in p for k in OPTION_KEYS) or p.get("instrument") == "option"
-        card_id = f'id="prop-{parts_idx}"' if not is_option else ""
-        parts.append(f'<div class="proposal-card" {card_id}>')
-        parts.append(f'<p class="p-title">Proposed: {html.escape(describe_proposal(p))}</p>')
+        title = f"Proposed: {html.escape(describe_proposal(p))}"
+        if is_option and p.get("option_id"):
+            oi = len(option_proposals)
+            parts.append('<div class="proposal-card">')
+            parts.append(f'<label class="opt-row"><input type="checkbox" class="opt-select" '
+                         f'data-opt="{oi}"><span class="p-title">{title}</span></label>')
+            option_proposals.append(p)
+        else:
+            card_id = f'id="prop-{len(equity_proposals)}"' if not is_option else ""
+            parts.append(f'<div class="proposal-card" {card_id}>')
+            parts.append(f'<p class="p-title">{title}</p>')
+        if p.get("eli5"):
+            parts.append(f'<p class="eli5"><b>ELI5</b> &nbsp;{html.escape(str(p["eli5"]))}</p>')
         if p.get("note"):
             parts.append(f'<p class="p-note">{html.escape(str(p["note"]))}</p>')
-        shown = {k: v for k, v in p.items() if k not in ("note",)}
+        shown = {k: v for k, v in p.items() if k not in ("note", "eli5")}
         if "account_number" in shown:
             shown["account_number"] = "••••" + str(shown["account_number"])[-4:]
         parts.append(f'<p class="p-params">{html.escape(json.dumps(shown))}</p>')
         if is_option:
-            parts.append('<p class="p-note">Option order — execute manually in the '
-                         "Robinhood app for now.</p>")
+            if not p.get("option_id"):
+                parts.append('<p class="p-note">Option order — execute manually in the '
+                             "Robinhood app (missing contract id for one-tap build).</p>")
         else:
             parts.append('<button class="accept-btn" type="button">Accept — review with broker</button>')
             parts.append('<div class="review-box" hidden></div>')
             equity_proposals.append(p)
         parts.append("</div>")
+    if option_proposals:
+        parts.append('<div class="build-bar">'
+                     '<button id="build-btn" class="primary" type="button">Build selected order</button>'
+                     '<div id="build-out"></div></div>')
 
     if not parsed:
         parts.append(
@@ -650,7 +798,8 @@ def build() -> str:
 
     js = (JS.replace("__SERVER__", MCP_SERVER)
             .replace("__ACCOUNT__", AGENTIC_ACCOUNT)
-            .replace("__PROPOSALS__", json.dumps(equity_proposals)))
+            .replace("__PROPOSALS__", json.dumps(equity_proposals))
+            .replace("__OPTION_PROPOSALS__", json.dumps(option_proposals)))
     parts.append(f"<script>{js}</script>")
     return "\n".join(parts)
 
