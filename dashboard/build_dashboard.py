@@ -321,65 +321,50 @@ JS = r"""
     throw {code: "shape", message: tool + " returned an unexpected payload"};
   }
 
+  // Request/response shapes verified against live calls on 2026-07-21.
   async function scanSymbol(sym, budget, found) {
-    var chainsData = await callData("get_option_chains", {symbol: sym});
-    var chains = pickList(chainsData, ["chains", "option_chains", "results"]) ||
-                 (chainsData.chain ? [chainsData.chain] : [chainsData]);
-    var chain = chains[0] || {};
-    var exps = pickList(chain, ["expiration_dates", "expirations"]) ||
-               pickList(chainsData, ["expiration_dates", "expirations"]) || [];
-    exps = exps.map(String).filter(function (e) { var d = dte(e); return d >= 7 && d <= 30; }).slice(0, 2);
-    if (!exps.length) return sym + ": no expirations in the 7–30 day window";
+    var chainsData = await callData("get_option_chains", {underlying_symbol: sym});
+    var chain = (pickList(chainsData, ["chains"]) || [])[0] || {};
+    var exps = (chain.expiration_dates || [])
+      .map(String).filter(function (e) { var d = dte(e); return d >= 7 && d <= 30; }).slice(0, 3);
+    if (!exps.length || !chain.id) return sym + ": no expirations in the 7–30 day window";
 
     var px = null;
     try {
       var eq = await callData("get_equity_quotes", {symbols: [sym]});
-      var q0 = (pickList(eq, ["quotes", "results"]) || [])[0] || {};
-      px = num(q0.last_trade_price) || num(q0.last_extended_hours_trade_price) || num(q0.price);
+      var q0 = (pickList(eq, ["results"]) || [])[0] || {};
+      px = num((q0.quote || q0).last_trade_price);
     } catch (e) { /* ranking degrades gracefully without underlying price */ }
 
-    for (var e = 0; e < exps.length; e++) {
-      var instData = await callData("get_option_instruments",
-        {symbol: sym, expiration_date: exps[e], chain_id: chain.id});
-      var insts = pickList(instData, ["instruments", "options", "results"]) || [];
-      insts = insts.map(function (it) {
-        return {id: it.option_id || it.id || it.instrument_id,
-                strike: num(it.strike_price || it.strike),
-                kind: it.type || it.option_type || "",
-                exp: String(it.expiration_date || exps[e])};
-      }).filter(function (it) { return it.id && it.strike; });
-      if (px) insts.sort(function (a, b) { return Math.abs(a.strike - px) - Math.abs(b.strike - px); });
-      insts = insts.slice(0, 8);
-      if (!insts.length) continue;
+    var instData = await callData("get_option_instruments",
+      {chain_id: chain.id, expiration_dates: exps.join(",")});
+    var insts = (pickList(instData, ["instruments"]) || []).map(function (it) {
+      return {id: it.id, strike: num(it.strike_price), kind: it.type,
+              exp: String(it.expiration_date)};
+    }).filter(function (it) { return it.id && it.strike; });
+    if (px) insts.sort(function (a, b) { return Math.abs(a.strike - px) - Math.abs(b.strike - px); });
+    insts = insts.slice(0, 16);
+    if (!insts.length) return sym + ": no contracts listed";
 
-      var ids = insts.map(function (it) { return it.id; });
-      var quotesData;
-      try {
-        quotesData = await callData("get_option_quotes", {option_ids: ids});
-      } catch (err) {
-        if (err && (err.code === "tool_error" || err.code === "bad_request")) {
-          quotesData = await callData("get_option_quotes", {instrument_ids: ids});
-        } else { throw err; }
-      }
-      var quotes = pickList(quotesData, ["quotes", "results"]) || [];
-      quotes.forEach(function (q) {
-        var id = q.option_id || q.instrument_id || q.id;
-        var inst = insts.filter(function (it) { return it.id === id; })[0];
-        if (!inst) return;
-        var bid = num(q.bid_price), ask = num(q.ask_price);
-        var oi = num(q.open_interest);
-        if (bid == null || ask == null || ask <= 0) return;
-        var mid = (bid + ask) / 2;
-        var cost = mid * 100;
-        var spreadFrac = mid > 0 ? (ask - bid) / mid : 1;
-        if (cost > budget || cost <= 0) return;
-        if (spreadFrac > 0.25) return;
-        if (oi != null && oi < 100) return;
-        found.push({sym: sym, kind: inst.kind, strike: inst.strike, exp: inst.exp,
-                    mid: mid, cost: cost, spread: spreadFrac, oi: oi,
-                    dist: px ? Math.abs(inst.strike - px) / px : 9});
-      });
-    }
+    var quotesData = await callData("get_option_quotes",
+      {instrument_ids: insts.map(function (it) { return it.id; })});
+    (pickList(quotesData, ["results"]) || []).forEach(function (r) {
+      var q = r.quote || r;
+      var inst = insts.filter(function (it) { return it.id === q.instrument_id; })[0];
+      if (!inst) return;
+      var bid = num(q.bid_price), ask = num(q.ask_price);
+      var oi = num(q.open_interest);
+      if (bid == null || ask == null || ask <= 0) return;
+      var mid = (bid + ask) / 2;
+      var cost = mid * 100;
+      var spreadFrac = mid > 0 ? (ask - bid) / mid : 1;
+      if (cost > budget || cost <= 0) return;
+      if (spreadFrac > 0.25) return;
+      if (oi != null && oi < 100) return;
+      found.push({sym: sym, kind: inst.kind, strike: inst.strike, exp: inst.exp,
+                  mid: mid, cost: cost, spread: spreadFrac, oi: oi,
+                  dist: px ? Math.abs(inst.strike - px) / px : 9});
+    });
     return null;
   }
 
