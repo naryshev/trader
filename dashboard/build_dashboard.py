@@ -295,6 +295,148 @@ JS = r"""
     refresh(false); // initial load, cache-friendly
   }
 
+  // ---------- On-demand option scan ("Find fresh options") ----------
+  var UNIVERSE = ["F", "SOFI", "PLTR", "AAL", "NIO", "LCID", "INTC"];
+  var scanBtn = document.getElementById("scan-btn");
+  var scanOut = document.getElementById("scan-out");
+
+  function dte(expStr) {
+    var d = new Date(expStr + "T21:00:00Z");
+    return Math.round((d - Date.now()) / 86400000);
+  }
+  function pickList(obj, keys) {
+    for (var i = 0; i < keys.length; i++) {
+      var v = obj && obj[keys[i]];
+      if (Array.isArray(v)) return v;
+    }
+    return null;
+  }
+  function num(v) { var n = Number(v); return isNaN(n) ? null : n; }
+
+  async function callData(tool, input) {
+    var res = await window.claude.mcp.callTool(SERVER, tool, input, {cache: false});
+    var p = res.payload;
+    if (p && typeof p === "object" && p.data) return p.data;
+    if (p && typeof p === "object") return p;
+    throw {code: "shape", message: tool + " returned an unexpected payload"};
+  }
+
+  async function scanSymbol(sym, budget, found) {
+    var chainsData = await callData("get_option_chains", {symbol: sym});
+    var chains = pickList(chainsData, ["chains", "option_chains", "results"]) ||
+                 (chainsData.chain ? [chainsData.chain] : [chainsData]);
+    var chain = chains[0] || {};
+    var exps = pickList(chain, ["expiration_dates", "expirations"]) ||
+               pickList(chainsData, ["expiration_dates", "expirations"]) || [];
+    exps = exps.map(String).filter(function (e) { var d = dte(e); return d >= 7 && d <= 30; }).slice(0, 2);
+    if (!exps.length) return sym + ": no expirations in the 7–30 day window";
+
+    var px = null;
+    try {
+      var eq = await callData("get_equity_quotes", {symbols: [sym]});
+      var q0 = (pickList(eq, ["quotes", "results"]) || [])[0] || {};
+      px = num(q0.last_trade_price) || num(q0.last_extended_hours_trade_price) || num(q0.price);
+    } catch (e) { /* ranking degrades gracefully without underlying price */ }
+
+    for (var e = 0; e < exps.length; e++) {
+      var instData = await callData("get_option_instruments",
+        {symbol: sym, expiration_date: exps[e], chain_id: chain.id});
+      var insts = pickList(instData, ["instruments", "options", "results"]) || [];
+      insts = insts.map(function (it) {
+        return {id: it.option_id || it.id || it.instrument_id,
+                strike: num(it.strike_price || it.strike),
+                kind: it.type || it.option_type || "",
+                exp: String(it.expiration_date || exps[e])};
+      }).filter(function (it) { return it.id && it.strike; });
+      if (px) insts.sort(function (a, b) { return Math.abs(a.strike - px) - Math.abs(b.strike - px); });
+      insts = insts.slice(0, 8);
+      if (!insts.length) continue;
+
+      var ids = insts.map(function (it) { return it.id; });
+      var quotesData;
+      try {
+        quotesData = await callData("get_option_quotes", {option_ids: ids});
+      } catch (err) {
+        if (err && (err.code === "tool_error" || err.code === "bad_request")) {
+          quotesData = await callData("get_option_quotes", {instrument_ids: ids});
+        } else { throw err; }
+      }
+      var quotes = pickList(quotesData, ["quotes", "results"]) || [];
+      quotes.forEach(function (q) {
+        var id = q.option_id || q.instrument_id || q.id;
+        var inst = insts.filter(function (it) { return it.id === id; })[0];
+        if (!inst) return;
+        var bid = num(q.bid_price), ask = num(q.ask_price);
+        var oi = num(q.open_interest);
+        if (bid == null || ask == null || ask <= 0) return;
+        var mid = (bid + ask) / 2;
+        var cost = mid * 100;
+        var spreadFrac = mid > 0 ? (ask - bid) / mid : 1;
+        if (cost > budget || cost <= 0) return;
+        if (spreadFrac > 0.25) return;
+        if (oi != null && oi < 100) return;
+        found.push({sym: sym, kind: inst.kind, strike: inst.strike, exp: inst.exp,
+                    mid: mid, cost: cost, spread: spreadFrac, oi: oi,
+                    dist: px ? Math.abs(inst.strike - px) / px : 9});
+      });
+    }
+    return null;
+  }
+
+  async function runScan() {
+    scanBtn.disabled = true;
+    scanOut.innerHTML = '<p class="msg">Scanning…</p>';
+    var notes = [];
+    try {
+      var port = await callData("get_portfolio", {account_number: ACCOUNT});
+      var budget = num(port.cash) || 0;
+      if (budget < 1) {
+        scanOut.innerHTML = '<p class="msg warn">No cash available to scan against.</p>';
+        return;
+      }
+      var found = [];
+      for (var i = 0; i < UNIVERSE.length && found.length < 8; i++) {
+        var sym = UNIVERSE[i];
+        scanOut.innerHTML = '<p class="msg">Scanning ' + sym + "… (" + found.length + " candidates so far)</p>";
+        try {
+          var note = await scanSymbol(sym, budget, found);
+          if (note) notes.push(note);
+        } catch (err) {
+          if (err && err.code === "shape") { notes.push(sym + ": " + err.message); continue; }
+          if (err && (err.code === "needs_reauth" || err.code === "server_not_connected" ||
+                      err.code === "not_granted" || err.code === "capability_disabled")) throw err;
+          notes.push(sym + ": " + (err && err.message ? String(err.message).slice(0, 120) : "failed"));
+        }
+      }
+      found.sort(function (a, b) { return (a.dist - b.dist) || ((b.oi || 0) - (a.oi || 0)); });
+      var top = found.slice(0, 5);
+      var h = "<h3>Fresh candidates (budget " + fmtUsd(budget) + ")</h3>";
+      if (!top.length) {
+        h += '<p class="msg warn">Nothing passes the gates right now (cost ≤ budget, spread ≤ 25% of mid, OI ≥ 100, 7–30 DTE).</p>';
+      }
+      top.forEach(function (c) {
+        h += '<div class="proposal-card"><p class="p-title">' +
+          c.sym + " " + String(c.kind).toUpperCase() + " $" + c.strike + " exp " + c.exp +
+          " · " + dte(c.exp) + "d</p>" +
+          '<p class="p-params">limit at mid ' + fmtUsd(c.mid) + "/sh · cost ≈ " + fmtUsd(c.cost) +
+          " · spread " + Math.round(c.spread * 100) + "% · OI " + (c.oi == null ? "?" : c.oi) + "</p>" +
+          '<p class="p-note">Execute manually in the Robinhood app (limit order at the mid).</p></div>';
+      });
+      if (notes.length) {
+        h += '<p class="msg">' + notes.map(function (n) { return n.replace(/[<>&]/g, ""); }).join(" · ") + "</p>";
+      }
+      scanOut.innerHTML = h;
+    } catch (err) {
+      scanOut.innerHTML = '<p class="msg warn">' + errorCopy(err).replace(/[<>&]/g, "") + "</p>";
+    } finally {
+      scanBtn.disabled = false;
+    }
+  }
+  if (scanBtn) {
+    if (!mcpOk) { scanBtn.disabled = true; }
+    else scanBtn.addEventListener("click", function () { runScan(); });
+  }
+
   // ---------- Proposal accept flow: review -> explicit confirm -> place ----------
   function uuid() {
     if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
@@ -452,6 +594,7 @@ def build() -> str:
         '<section class="live">',
         '<div class="live-head"><h2>Live account</h2>'
         '<button id="refresh-btn" type="button">Refresh</button>'
+        '<button id="scan-btn" type="button">Find fresh options</button>'
         '<span class="live-updated" id="live-updated"></span></div>',
         '<div class="figures">'
         '<span class="fig"><span class="lbl">Account value</span><b id="fig-total">—</b></span>'
@@ -460,6 +603,7 @@ def build() -> str:
         '<span class="fig"><span class="lbl">Positions</span><b id="fig-pos">—</b></span>'
         "</div>",
         '<p class="msg" id="live-msg"></p>',
+        '<div id="scan-out"></div>',
         "</section>",
     ]
 
